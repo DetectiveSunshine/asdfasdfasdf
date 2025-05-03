@@ -1,34 +1,36 @@
-name: Chromium Build
+name: Build Chromium with LTO and O3
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted  # Use self-hosted Windows runner
     steps:
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y git python3 build-essential curl lsb-release
+    - name: Set up Git
+      run: git config --global core.autocrlf false
 
-    - name: Set up depot_tools
+    - name: Install Depot Tools
       run: |
         git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
-        echo "$(pwd)/depot_tools" >> $GITHUB_PATH
+        echo "$env:GITHUB_WORKSPACE\depot_tools" >> $env:GITHUB_PATH
 
-    - name: Fetch Chromium
+    - name: Fetch Chromium Source
       run: |
         mkdir chromium && cd chromium
         fetch --nohooks chromium
+        cd src
         gclient runhooks
 
-    - name: Configure GN
+    - name: Set up Build Config with LTO and O3
       run: |
         cd chromium/src
-        gn gen out/release --args="is_debug=false is_component_build=false use_lld=true use_thin_lto=true thin_lto_enable_optimizations=true"
+        gn gen out/Default --args="is_debug=false is_component_build=false symbol_level=0 enable_nacl=false is_official_build=true use_lld=true chrome_pgo_phase=0 use_thin_lto=true use_lto=true is_clang=true clang_use_chrome_plugins=false treat_warnings_as_errors=false dcheck_always_on=false target_cpu=\"x64\""
+        echo 'cflags = [ "-O3" ]' >> out/Default/args.gn
+        echo 'ldflags = [ "-O3" ]' >> out/Default/args.gn
+        gn gen out/Default
 
-    - name: Build Chrome
+    - name: Build Chromium
       run: |
         cd chromium/src
-        autoninja -C out/release chrome
+        autoninja -C out/Default chrome

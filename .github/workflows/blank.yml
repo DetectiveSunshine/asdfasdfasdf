@@ -1,36 +1,101 @@
-name: Build Chromium with LTO and O3
+name: Build Chromium - Windows x64
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Manually trigger the workflow
 
 jobs:
   build:
-    runs-on: self-hosted  # Use self-hosted Windows runner
+    runs-on: windows-latest
+    timeout-minutes: 360 # 6 hours
+
     steps:
-    - name: Set up Git
-      run: git config --global core.autocrlf false
+      - name: Set up Environment
+        run: |
+          # Enable long paths
+          git config --system core.longpaths true
+          # Print useful information
+          Get-Item Env:TEMP
+          Get-Item Env:TMP
+          Get-Item Env:SystemRoot
+          Get-Item Env:ProgramFiles
+          Get-Item Env:ProgramFiles(x86)
 
-    - name: Install Depot Tools
-      run: |
-        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
-        echo "$env:GITHUB_WORKSPACE\depot_tools" >> $env:GITHUB_PATH
+      - name: Install Dependencies
+        run: |
+          choco install python --no-progress
+          choco install git --no-progress
+          choco install visualstudio2022buildtools --no-progress #This should provide the necessary build tools.
+          choco install ninja --no-progress
+          choco install clang --no-progress # Install clang
+          #Set Environment Variables
+          Write-Host "##[set-variable name=DEPOT_TOOLS_WIN_TOOLCHAIN]0" # Use the system toolchain, not the one from depot_tools
+          Write-Host "##[set-variable name=GYP_MSVS_VERSION]2022" # Ensure GYP uses VS 2022
+          Write-Host "##[set-variable name=GYP_CHROMIUM_NO_ACTION]=1"
+          Write-Host "##[set-variable name=PATH]${Env:PATH};C:\Program Files\nodejs" # Add Node.js to PATH if needed.  Likely already there.
+          Write-Host "##[set-variable name=PATH]${Env:PATH};C:\Program Files\Git\cmd" # Add Git
+          Write-Host "##[set-variable name=PATH]${Env:PATH};C:\Program Files\LLVM\bin" # Add LLVM/Clang to PATH
+          Write-Host "##[set-variable name=CLANG_PATH]C:\Program Files\LLVM\bin" # Corrected variable name
+          Write-Host "##[set-variable name=CC]clang-cl.exe"
+          Write-Host "##[set-variable name=CXX]clang-cl.exe"
+          Write-Host "##[set-variable name=LINK]link.exe" # Ensure the linker is in the path
+          Write-Host "##[set-variable name=LIB]lib.exe"
+          Write-Host "##[set-variable name=PATH]${Env:PATH};C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64" # Add MSVC tools.  Adjust as needed.
+          Write-Host "##[set-variable name=INCLUDE]${Env:INCLUDE};C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\include" # Add MSVC includes. Adjust Version
+          Write-Host "##[set-variable name=LIB]${Env:LIB};C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\lib\x64"  # Add MSVC Lib. Adjust version
+          Write-Host "##[set-variable name=VCTOOLSINSTALLDIR]C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.38.33130\" #Add VCTOOLS
+          Write-Host "##[set-variable name=WindowsSdkDir]$([System.IO.Path]::Combine($env:ProgramFiles, 'Windows Kits\10'))"
+          #Find the latest SDK Version
+          $latestSDK = Get-ChildItem -Path "C:\Program Files\Windows Kits\10\Lib" | Sort-Object Name -Descending | Select-Object -First 1
+          Write-Host "Latest SDK Version: $($latestSDK.Name)"
+          Write-Host "##[set-variable name=WindowsSDKVersion]$($latestSDK.Name)"
+          Write-Host "##[set-variable name=LIB]${Env:LIB};C:\Program Files\Windows Kits\10\Lib\$($latestSDK.Name)\um\x64"
+          Write-Host "##[set-variable name=INCLUDE]${Env:INCLUDE};C:\Program Files\Windows Kits\10\Include\$($latestSDK.Name)\um"
+          Write-Host "##[set-variable name=INCLUDE]${Env:INCLUDE};C:\Program Files\Windows Kits\10\Include\$($latestSDK.Name)\shared"
+          Write-Host "##[set-variable name=INCLUDE]${Env:INCLUDE};C:\Program Files\Windows Kits\10\Include\$($latestSDK.Name)\ucrt"
+          Write-Host "##[set-variable name=PATH]${Env:PATH};C:\Program Files\Windows Kits\10\bin\x64"
 
-    - name: Fetch Chromium Source
-      run: |
-        mkdir chromium && cd chromium
-        fetch --nohooks chromium
-        cd src
-        gclient runhooks
+      - name: Get Chromium Source Code
+        run: |
+          # depot_tools is no longer needed if you have all the dependencies.
+          # git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          # $env:PATH = "${{ github.workspace }}\depot_tools;${env:PATH}"
+          # gclient config --unmanaged
+          # fetch chromium
+          # gclient sync
+          git clone https://chromium.googlesource.com/chromium/src/chromium -b main --depth 1
+          cd chromium
+          git fetch --tags
+          #Find latest stable tag
+          $stable_tag = git tag --list --sort=-refname | grep -E "chrome-([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)" | head -n 1
+          git checkout "tags/$stable_tag"
+          Write-Host "Checked out tag: $stable_tag"
+          Write-Host "##[set-variable name=CHROMIUM_DIR]${{ github.workspace }}\chromium"
 
-    - name: Set up Build Config with LTO and O3
-      run: |
-        cd chromium/src
-        gn gen out/Default --args="is_debug=false is_component_build=false symbol_level=0 enable_nacl=false is_official_build=true use_lld=true chrome_pgo_phase=0 use_thin_lto=true use_lto=true is_clang=true clang_use_chrome_plugins=false treat_warnings_as_errors=false dcheck_always_on=false target_cpu=\"x64\""
-        echo 'cflags = [ "-O3" ]' >> out/Default/args.gn
-        echo 'ldflags = [ "-O3" ]' >> out/Default/args.gn
-        gn gen out/Default
+      - name: Create Build Directory
+        run: |
+          cd $env:CHROMIUM_DIR
+          mkdir build
 
-    - name: Build Chromium
-      run: |
-        cd chromium/src
-        autoninja -C out/Default chrome
+      - name: Configure Build
+        run: |
+          cd $env:CHROMIUM_DIR
+          # Example args with LTO and -O3.  Adjust as needed.
+          gn gen --args="is_debug=false target_cpu=\"x64\" optimize=\"-O3\" symbol_level=0 is_component_build=false enable_lto=true use_clang_cl=true treat_warnings_as_errors=false" build
+          # Print the build args for debugging
+          type build\args.gn
+
+      - name: Build Chromium
+        run: |
+          cd $env:CHROMIUM_DIR
+          ninja -C build chrome
+
+      - name: Archive Build Output
+        run: |
+          cd $env:CHROMIUM_DIR\build
+          Compress-Archive -Path chrome.exe -DestinationPath chromium_build.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: chromium_build
+          path: chromium_build.zip

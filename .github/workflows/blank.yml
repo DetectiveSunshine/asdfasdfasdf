@@ -1,0 +1,83 @@
+name: Chromium Build with Optimizations for Windows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest # Use Windows runner for Windows binary build
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Dependencies
+      run: |
+        choco install python3
+        choco install git
+        choco install cmake
+        choco install ninja
+        choco install clang
+        choco install llvm
+        choco install libssl
+
+    - name: Install Depot Tools
+      run: |
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+        $env:PATH += ";$(pwd)\depot_tools"
+        echo "Depot tools installed"
+
+    - name: Fetch Chromium Source
+      run: |
+        fetch --nohooks chromium
+        cd src
+        git checkout main  # Or the desired branch
+
+    - name: Sync Dependencies
+      run: |
+        gclient sync
+
+    - name: Configure Build for Optimizations
+      run: |
+        cd src
+        gn gen out/Default --args='
+          is_debug=false
+          is_component_build=false
+          target_os="win"
+          target_cpu="x64"
+          use_clang=true
+          use_lld=true
+          use_thin_lto=true
+          thin_lto_enable_optimizations=true
+          chrome_pgo_level=2
+          symbol_level=0
+          treat_warnings_as_errors=true
+          enable_icu=true
+          enable_nacl=false
+          ffmpeg_branding="Chrome"
+          is_official_build=true
+          use_system_libcxx=true
+          use_lto=true
+          is_clang=true
+          clang_use_chrome_plugins=false
+          use_gold=true
+          lto_level="full"
+          enable_nacl=false
+        '
+
+    - name: Build Chromium
+      run: |
+        cd src
+        ninja -C out/Default chrome
+        echo "Build complete"
+
+    - name: Upload Build Artifacts (optional)
+      uses: actions/upload-artifact@v3
+      with:
+        name: chromium-build
+        path: src/out/Default/chrome

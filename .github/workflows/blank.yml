@@ -10,11 +10,11 @@ jobs:
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
-        with: 
+        with:
           check-latest: true
 
       - name: Install Git using Chocolatey
-        run: choco install -y git 
+        run: choco install -y git
 
       - name: Install Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2
@@ -24,6 +24,9 @@ jobs:
           mkdir depot_tools_dir
           cd depot_tools_dir
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          # The line below adds depot_tools to the PATH for subsequent steps.
+          # However, sometimes the environment isn't immediately updated for the very next step.
+          # We will also explicitly add it in the fetch step for robustness.
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
       - name: Create chromium directory
@@ -31,17 +34,19 @@ jobs:
 
       - name: Fetch Chromium (without hooks)
         run: |
+          # Explicitly add the depot_tools directory to the PATH for this step
+          # This ensures the 'fetch' command is recognized.
+          $depotToolsPath = "$env:GITHUB_WORKSPACE\depot_tools_dir\depot_tools"
+          $env:PATH = "$depotToolsPath;$env:PATH"
           cd chromium
           fetch --nohooks chromium
-
 
       - name: Run GClient Hooks
         run: |
           cd chromium/src
           gclient runhooks
+
       - name: Get Latest Stable Version Tag
-
-
         id: get_version
         shell: pwsh
         run: |
@@ -49,34 +54,31 @@ jobs:
           $parsed = $json.Content | ConvertFrom-Json
           $stable = $parsed | Where-Object { $_.channel -eq "Stable" } | Select-Object -First 1
           echo "Latest stable version: $($stable.version)"
-          echo "::set-output name=version::$($stable.version)"
-
+          # Using ::set-output is deprecated, use environment files instead
+          echo "version=$($stable.version)" >> $env:GITHUB_OUTPUT
 
 
       - name: Checkout Latest Stable Tag
         run: |
           cd chromium/src
           git fetch --tags
+          # Access the output using steps.<step_id>.outputs.<output_name>
           git checkout tags/${{ steps.get_version.outputs.version }}
-
 
       - name: Configure GN Build
         run: |
           cd chromium/src
           gn gen out/Default --args="is_debug=false is_component_build=false"
 
-
       - name: Build Chromium (Autoninja)
         run: |
           cd chromium/src
           autoninja -C out/Default chrome
 
-
       - name: Package Installer
         run: |
           cd chromium/src
           autoninja -C out/Default mini_installer.exe
-
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

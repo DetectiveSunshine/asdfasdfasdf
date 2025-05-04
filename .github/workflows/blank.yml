@@ -14,7 +14,6 @@ jobs:
       - name: Set up Git for Windows SDK (full)
         uses: git-for-windows/setup-git-for-windows-sdk@v1
         with:
-          install-dir: C:\git-sdk
           flavor: full
 
       - name: Install Visual Studio Build Tools
@@ -22,9 +21,10 @@ jobs:
 
       - name: Install Depot Tools
         run: |
+          mkdir depot_tools_dir
+          cd depot_tools_dir
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$PWD/depot_tools" >> $GITHUB_PATH
-
 
       - name: Create chromium directory
         run: mkdir chromium

@@ -1,91 +1,67 @@
-name: Build Chromium on Windows
+name: Build Chromium Stable
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Visual Studio 2022
-        uses: microsoft/setup-msbuild@v2
+      - name: Set Up Python
+        uses: actions/setup-python@v5  # Always installs latest Python 3.x by default
         with:
-          msbuild: 'true'
-          vc-tools: 'true'
-          desktop-workload: 'true'
+          python-version: '3.x'       # Ensures latest stable 3.x release
 
-      - name: Install Windows 11 SDK
-        uses: actions/setup-windows-sdk@v1
+      - name: Install Git for Windows
+        uses: git-for-windows/setup-git-for-windows@v1 # Always pulls latest by default
+
+      - name: Install Visual Studio Build Tools
+        uses: microsoft/setup-msbuild@v1.1
+        # Uses latest supported MSBuild from Visual Studio 2022 available on runner
 
       - name: Install Depot Tools
         run: |
-          $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "https://chromium.googlesource.com/chromium/tools/depot_tools.git" -OutFile "C:\depot_tools.zip"
-          Expand-Archive -Path "C:\depot_tools.zip" -DestinationPath "C:\depot_tools"
-          [System.Environment]::SetEnvironmentVariable('PATH', $env:PATH + ';C:\depot_tools', [System.EnvironmentVariableTarget]::Machine)
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$PWD/depot_tools" >> $GITHUB_PATH
 
-      - name: Get Chrome Stable version from Chromium Dashboard
-        id: chrome_version
+      - name: Fetch Chromium Source Code
         run: |
-          $ErrorActionPreference = "Stop"
-          $response = Invoke-WebRequest -Uri "https://chromiumdash.appspot.com/branches" | ConvertFrom-Json
-          $stable_version = ($response.branches | Where-Object { $_.name -eq 'stable' }).head
-          Write-Output "Stable Chrome version: $stable_version"
-          echo "version=$stable_version" >> $GITHUB_ENV
+          mkdir chromium && cd chromium
+          fetch --nohooks chromium
+          cd src
+          gclient runhooks
 
-      - name: Sync depot tools with Chromium version
+      - name: Determine Latest Stable Version
+        id: get_version
+        shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          cd C:\chromium
-          .\depot_tools\gclient sync --revision=$env:version
+          $version = (Invoke-WebRequest -Uri "https://chromiumdash.appspot.com/releases?platform=Windows" -UseBasicParsing).Content |
+            ConvertFrom-Json | Where-Object { $_.channel -eq "Stable" } | Select-Object -First 1 -ExpandProperty version
+          echo "::set-output name=version::$version"
 
-      - name: Install Git
-        uses: git-tool-installation-action@v1
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - name: Install 7-Zip
-        uses: lukasz-wronski/setup-7zip@v1
-
-      - name: Fetch Chromium source code
+      - name: Checkout Stable Tag
         run: |
-          $ErrorActionPreference = "Stop"
-          git clone https://chromium.googlesource.com/chromium/src.git C:\chromium
-          cd C:\chromium
-          .\depot_tools\gclient sync --revision=$env:version
+          cd chromium/src
+          git fetch --tags
+          git checkout tags/${{ steps.get_version.outputs.version }}
 
-      - name: Generate build files
+      - name: Configure Build
         run: |
-          $ErrorActionPreference = "Stop"
-          cd C:\chromium
-          .\depot_tools\gn gen out\Default --args="is_debug=false is_component_build=false"
+          cd chromium/src
+          gn gen out/Default --args="is_debug=false is_component_build=false"
 
       - name: Build Chromium
         run: |
-          $ErrorActionPreference = "Stop"
-          cd C:\chromium
-          .\depot_tools\autoninja -C out\Default chrome
+          cd chromium/src
+          autoninja -C out/Default chrome
 
-      - name: Build installer
+      - name: Package Build Artifacts
         run: |
-          $ErrorActionPreference = "Stop"
-          cd C:\chromium
-          .\depot_tools\autoninja -C out\Default mini_installer.exe
+          cd chromium/src
+          autoninja -C out/Default mini_installer.exe
 
-      - name: Upload build artifacts
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: chromium-installer
-          path: C:\chromium\out\Default\mini_installer.exe
+          name: chromium-build
+          path: chromium/src/out/Default/mini_installer.exe

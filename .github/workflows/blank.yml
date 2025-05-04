@@ -7,14 +7,8 @@ jobs:
   build:
     runs-on: windows-latest
 
-    steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          check-latest: true
-
       - name: Install Git using Chocolatey
-        run: choco install -y git
+        run: choco install -y git python
 
       - name: Install Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2

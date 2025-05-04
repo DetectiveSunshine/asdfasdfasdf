@@ -55,11 +55,13 @@ jobs:
           fetch --nohooks chromium
         }
         
-        # Checkout stable branch
+        # Fetch the latest stable tag
         cd $env:USERPROFILE\chromium\src
         git fetch --all
-        git checkout stable
-        git pull origin stable
+        git fetch --tags
+        $latest_stable_tag = git tag -l | Sort-Object | Select-Object -Last 1
+        git checkout $latest_stable_tag
+        git pull origin $latest_stable_tag
 
         gclient runhooks
 

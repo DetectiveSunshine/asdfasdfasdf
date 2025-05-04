@@ -1,80 +1,59 @@
-name: Build Chromium Stable
+name: Chromium Windows Stable Build
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      DEPOT_TOOLS_WIN_TOOLCHAIN: 0
 
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Install Git via Chocolatey
-        run: |
-          choco install git -y
-          echo "$(Get-Command git).Source" >> $GITHUB_PATH
+    - name: Install Dependencies
+      run: |
+        choco install python --no-progress -y
+        choco install git --no-progress -y
+        choco install visualstudio2022buildtools --no-progress -y
+        python -m pip install --upgrade pip
+        python -m pip install pyyaml six psutil setuptools requests
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+        echo "::add-path::$(pwd)/depot_tools"
 
-      - name: Install Visual Studio Build Tools
-        uses: microsoft/setup-msbuild@v2
+    - name: Get Stable Version
+      run: |
+        # Use Python to fetch the stable version from chromiumdash.appspot.com
+        python -c "import requests; import json; url = 'https://chromiumdash.appspot.com/branches?format=json'; response = requests.get(url); data = json.loads(response.text); stable_version = next((branch['version'] for branch in data if branch['name'] == 'Stable'), None); print(f'::set-output name=stable_version::{stable_version}')"
+      id: get_stable_version
 
-      - name: Install Depot Tools
-        run: |
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
-          echo "$PWD/depot_tools" >> $GITHUB_PATH
+    - name: Configure Environment
+      run: |
+        echo "DEPOT_TOOLS_WIN_TOOLCHAIN=0" >> $GITHUB_ENV
+        echo "GYP_MSVS_VERSION=2022" >> $GITHUB_ENV
+        echo "STABLE_VERSION=${{ steps.get_stable_version.outputs.stable_version }}" >> $GITHUB_ENV #set the stable version
+        python $(pwd)/depot_tools/gclient.py
 
-      - name: Create chromium directory
-        run: mkdir chromium
+    - name: Fetch Chromium Source Code
+      run: |
+        # Fetch the source code for the stable version.
+        python $(pwd)/depot_tools/gclient.py config --unmanaged https://chromium.googlesource.com/chromium/src@${{ env.STABLE_VERSION }}
+        python $(pwd)/depot_tools/gclient.py sync
 
-      - name: Fetch Chromium (without hooks)
-        run: |
-          cd chromium
-          $env:PATH += ";$PWD/depot_tools"  # Make sure depot_tools is in the PATH
-          fetch --nohooks chromium
+    - name: Build Chromium
+      run: |
+        cd src
+        gn args out\Release "target_os = \"win\"
+                               is_debug = false
+                               enable_stripping = true" #  customize gn args.
+        ninja -C out\Release chrome
 
-      - name: Run GClient Hooks
-        run: |
-          cd chromium/src
-          gclient runhooks
-
-      - name: Get Latest Stable Version Tag
-        id: get_version
-        shell: pwsh
-        run: |
-          $json = Invoke-WebRequest -Uri "https://chromiumdash.appspot.com/releases?platform=Windows" -UseBasicParsing
-          $parsed = $json.Content | ConvertFrom-Json
-          $stable = $parsed | Where-Object { $_.channel -eq "Stable" } | Select-Object -First 1
-          echo "Latest stable version: $($stable.version)"
-          echo "::set-output name=version::$($stable.version)"
-
-      - name: Checkout Latest Stable Tag
-        run: |
-          cd chromium/src
-          git fetch --tags
-          git checkout tags/${{ steps.get_version.outputs.version }}
-
-      - name: Configure GN Build
-        run: |
-          cd chromium/src
-          gn gen out/Default --args="is_debug=false is_clang=true symbol_level=0 use_lto=full is_official_build=true v8_symbol_level = 0 blink_symbol_level = 0 enable_nacl = false is_component_build=false"
-
-      - name: Build Chromium (Autoninja)
-        run: |
-          cd chromium/src
-          autoninja -C out/Default chrome
-
-      - name: Package Installer
-        run: |
-          cd chromium/src
-          autoninja -C out/Default mini_installer.exe
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: chromium-build
-          path: chromium/src/out/Default/mini_installer.exe
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: chromium-stable-build-artifacts
+        path: src/out/Release
+        retention-days: 1

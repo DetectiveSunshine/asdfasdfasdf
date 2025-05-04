@@ -10,9 +10,11 @@ jobs:
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
+        with: 
+          check-latest: true
 
       - name: Install Git using Chocolatey
-        run: choco install git -y
+        run: choco install -y git 
 
       - name: Install Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2

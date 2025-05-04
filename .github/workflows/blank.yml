@@ -16,11 +16,10 @@ jobs:
       - name: Set up Git for Windows SDK (full)
         uses: git-for-windows/setup-git-for-windows-sdk@v1
         with:
-          install-dir: C:\git-sdk
           flavor: full
 
       - name: Install Visual Studio Build Tools
-        uses: microsoft/setup-msbuild@v1.1
+        uses: microsoft/setup-msbuild@v2
 
       - name: Install Depot Tools
         run: |
@@ -59,7 +58,7 @@ jobs:
       - name: Configure GN Build
         run: |
           cd chromium/src
-          gn gen out/Default --args="is_debug=false is_component_build=false"
+          gn gen out/Default --args="is_debug=false is_clang=true symbol_level=0 use_lto=full is_official_build=true v8_symbol_level = 0 blink_symbol_level = 0 enable_nacl = false is_component_build=false"
 
       - name: Build Chromium (Autoninja)
         run: |

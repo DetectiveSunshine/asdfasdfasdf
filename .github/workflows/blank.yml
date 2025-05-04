@@ -16,11 +16,12 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Set up Git for Windows SDK (full)
-        uses: git-for-windows/setup-git-for-windows-sdk@v1
-        with:
-          flavor: full
+      - name: Install Git via Chocolatey
+        run: |
+          choco install git -y
+          echo "$(Get-Command git).Source" >> $GITHUB_PATH
 
+          
       - name: Install Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2
 

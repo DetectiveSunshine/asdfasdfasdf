@@ -11,10 +11,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
 
-      - name: Set up Git for Windows SDK (full)
-        uses: git-for-windows/setup-git-for-windows-sdk@v1
-        with:
-          flavor: full
+      - name: Install Git using Chocolatey
+        run: choco install git -y
 
       - name: Install Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2

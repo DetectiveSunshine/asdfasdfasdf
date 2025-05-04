@@ -1,96 +1,91 @@
-name: Build and Upload Chromium mini_installer (Windows)
+name: Build Chromium on Windows
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
-    runs-on: windows-latest  # Using the latest Windows runner
+    runs-on: windows-latest
 
     steps:
-    - name: Install required tools (git, python, vs, depot_tools)
-      run: |
-        # Install git if not installed
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-          Write-Host "Installing git..."
-          choco install -y git
-        }
-        
-        # Install Python if not installed
-        if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-          Write-Host "Installing Python..."
-          choco install -y python
-        }
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-        # Install Visual Studio Build Tools if not installed
-        $vswherePath = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-        if (-not (Test-Path $vswherePath)) {
-          Write-Host "Installing Visual Studio Build Tools..."
-          choco install -y visualstudio2022buildtools `
-            visualstudio2022-workload-vctools `
-            visualstudio2022-workload-nativedesktop
-        }
+      - name: Set up Visual Studio 2022
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild: 'true'
+          vc-tools: 'true'
+          desktop-workload: 'true'
 
-        # Install depot_tools if not present
-        if (-not (Test-Path "$env:USERPROFILE\depot_tools")) {
-          Write-Host "Cloning depot_tools..."
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:USERPROFILE\depot_tools"
-        }
+      - name: Install Windows 11 SDK
+        uses: actions/setup-windows-sdk@v1
 
-    - name: Set depot_tools environment
-      run: |
-        echo "DEPOT_TOOLS_UPDATE=0" >> $env:GITHUB_ENV
-        echo "$env:USERPROFILE\depot_tools" >> $env:GITHUB_PATH
+      - name: Install Depot Tools
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://chromium.googlesource.com/chromium/tools/depot_tools.git" -OutFile "C:\depot_tools.zip"
+          Expand-Archive -Path "C:\depot_tools.zip" -DestinationPath "C:\depot_tools"
+          [System.Environment]::SetEnvironmentVariable('PATH', $env:PATH + ';C:\depot_tools', [System.EnvironmentVariableTarget]::Machine)
 
-    - name: Set environment to prevent toolchain download
-      run: |
-        echo "DEPOT_TOOLS_WIN_TOOLCHAIN=0" >> $env:GITHUB_ENV
+      - name: Get Chrome Stable version from Chromium Dashboard
+        id: chrome_version
+        run: |
+          $ErrorActionPreference = "Stop"
+          $response = Invoke-WebRequest -Uri "https://chromiumdash.appspot.com/branches" | ConvertFrom-Json
+          $stable_version = ($response.branches | Where-Object { $_.name -eq 'stable' }).head
+          Write-Output "Stable Chrome version: $stable_version"
+          echo "version=$stable_version" >> $GITHUB_ENV
 
-    - name: Fetch Chromium source
-      run: |
-        if (-not (Test-Path "$env:USERPROFILE\chromium\src")) {
-          Write-Host "Fetching Chromium source..."
-          mkdir $env:USERPROFILE\chromium
-          cd $env:USERPROFILE\chromium
-          # Use --no-history to avoid issues with history fetching
-          fetch --nohooks --no-history chromium
-        }
+      - name: Sync depot tools with Chromium version
+        run: |
+          $ErrorActionPreference = "Stop"
+          cd C:\chromium
+          .\depot_tools\gclient sync --revision=$env:version
 
-    - name: Detect the latest stable branch or tag
-      run: |
-        cd $env:USERPROFILE\chromium\src
-        git fetch --tags
-        $stable_tag = git tag -l | grep "stable" | sort -V | Select-Object -Last 1
-        Write-Host "Checking out stable tag: $stable_tag"
-        git checkout $stable_tag
-        git pull origin $stable_tag
-        gclient runhooks
+      - name: Install Git
+        uses: git-tool-installation-action@v1
 
-    - name: Configure GN args (mini_installer, official build, -03 optimization, LTO, Google API)
-      run: |
-        cd $env:USERPROFILE\chromium\src
-        gn gen out\Default --args="
-          is_debug=false 
-          is_clang=true 
-          target_cpu=\"x64\" 
-          is_official_build=true 
-          is_component_build=false 
-          enable_nacl=false 
-          ffmpeg_branding=\"Chromium\" 
-          proprietary_codecs=true 
-          use_lto=true 
-          lto_type=full 
-          optimization_level=3
-          use_google_api=true
-        "
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
 
-    - name: Build mini_installer.exe
-      run: |
-        cd $env:USERPROFILE\chromium\src
-        autoninja -C out\Default mini_installer
+      - name: Install 7-Zip
+        uses: lukasz-wronski/setup-7zip@v1
 
-    - name: Upload mini_installer.exe
-      uses: actions/upload-artifact@v4
-      with:
-        name: chromium-mini-installer
-        path: ${{ env.USERPROFILE }}\chromium\src\out\Default\mini_installer.exe
+      - name: Fetch Chromium source code
+        run: |
+          $ErrorActionPreference = "Stop"
+          git clone https://chromium.googlesource.com/chromium/src.git C:\chromium
+          cd C:\chromium
+          .\depot_tools\gclient sync --revision=$env:version
+
+      - name: Generate build files
+        run: |
+          $ErrorActionPreference = "Stop"
+          cd C:\chromium
+          .\depot_tools\gn gen out\Default --args="is_debug=false is_component_build=false"
+
+      - name: Build Chromium
+        run: |
+          $ErrorActionPreference = "Stop"
+          cd C:\chromium
+          .\depot_tools\autoninja -C out\Default chrome
+
+      - name: Build installer
+        run: |
+          $ErrorActionPreference = "Stop"
+          cd C:\chromium
+          .\depot_tools\autoninja -C out\Default mini_installer.exe
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-installer
+          path: C:\chromium\out\Default\mini_installer.exe

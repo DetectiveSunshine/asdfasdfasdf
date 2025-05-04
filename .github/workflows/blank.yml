@@ -6,61 +6,72 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    steps:
-      - name: Set Up Python
-        uses: actions/setup-python@v5  # Always installs latest Python 3.x by default
-        with:
-          python-version: '3.x'       # Ensures latest stable 3.x release
 
-      - name: Install Git for Windows
-        uses: git-for-windows/setup-git-for-windows@v1 # Always pulls latest by default
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Set up Git for Windows SDK (full)
+        uses: git-for-windows/setup-git-for-windows-sdk@v1
+        with:
+          install-dir: C:\git-sdk
+          flavor: full
 
       - name: Install Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v1.1
-        # Uses latest supported MSBuild from Visual Studio 2022 available on runner
 
       - name: Install Depot Tools
         run: |
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
-      - name: Fetch Chromium Source Code
+      - name: Create chromium directory
+        run: mkdir chromium
+
+      - name: Fetch Chromium (without hooks)
         run: |
-          mkdir chromium && cd chromium
+          cd chromium
           fetch --nohooks chromium
-          cd src
+
+      - name: Run GClient Hooks
+        run: |
+          cd chromium/src
           gclient runhooks
 
-      - name: Determine Latest Stable Version
+      - name: Get Latest Stable Version Tag
         id: get_version
         shell: pwsh
         run: |
-          $version = (Invoke-WebRequest -Uri "https://chromiumdash.appspot.com/releases?platform=Windows" -UseBasicParsing).Content |
-            ConvertFrom-Json | Where-Object { $_.channel -eq "Stable" } | Select-Object -First 1 -ExpandProperty version
-          echo "::set-output name=version::$version"
+          $json = Invoke-WebRequest -Uri "https://chromiumdash.appspot.com/releases?platform=Windows" -UseBasicParsing
+          $parsed = $json.Content | ConvertFrom-Json
+          $stable = $parsed | Where-Object { $_.channel -eq "Stable" } | Select-Object -First 1
+          echo "Latest stable version: $($stable.version)"
+          echo "::set-output name=version::$($stable.version)"
 
-      - name: Checkout Stable Tag
+      - name: Checkout Latest Stable Tag
         run: |
           cd chromium/src
           git fetch --tags
           git checkout tags/${{ steps.get_version.outputs.version }}
 
-      - name: Configure Build
+      - name: Configure GN Build
         run: |
           cd chromium/src
           gn gen out/Default --args="is_debug=false is_component_build=false"
 
-      - name: Build Chromium
+      - name: Build Chromium (Autoninja)
         run: |
           cd chromium/src
           autoninja -C out/Default chrome
 
-      - name: Package Build Artifacts
+      - name: Package Installer
         run: |
           cd chromium/src
           autoninja -C out/Default mini_installer.exe
 
-      - name: Upload Build Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: chromium-build

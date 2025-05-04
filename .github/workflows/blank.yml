@@ -52,17 +52,18 @@ jobs:
           Write-Host "Fetching Chromium source..."
           mkdir $env:USERPROFILE\chromium
           cd $env:USERPROFILE\chromium
-          fetch --nohooks chromium
+          # Use --no-history to avoid issues with history fetching
+          fetch --nohooks --no-history chromium
         }
-        
-        # Fetch the latest stable tag
-        cd $env:USERPROFILE\chromium\src
-        git fetch --all
-        git fetch --tags
-        $latest_stable_tag = git tag -l | Sort-Object | Select-Object -Last 1
-        git checkout $latest_stable_tag
-        git pull origin $latest_stable_tag
 
+    - name: Detect the latest stable branch or tag
+      run: |
+        cd $env:USERPROFILE\chromium\src
+        git fetch --tags
+        $stable_tag = git tag -l | grep "stable" | sort -V | Select-Object -Last 1
+        Write-Host "Checking out stable tag: $stable_tag"
+        git checkout $stable_tag
+        git pull origin $stable_tag
         gclient runhooks
 
     - name: Configure GN args (mini_installer, official build, -03 optimization, LTO, Google API)
